@@ -56,16 +56,11 @@ layout: two-cols
 
 # Tokens: The "Atom" of LLMs
 
-<v-clicks>
-
 - LLMs don't "see" text as humans do
 - **Byte Pair Encoding (BPE)** splits text into subword units
 - Each token → unique integer ID
 - Model operates purely on token IDs
 
-</v-clicks>
-
-<v-click>
 
 ### The "Strawberry" Case Study
 
@@ -74,25 +69,22 @@ layout: two-cols
 
 Tokenization:
 "strawberry" → ["st", "raw", "berry"]
-             → [302, 1618, 19772]
+             → [302, 1618, 19772]  (example IDs)
 ```
 
 **The Problem**: The model never "sees" individual letters!
 
 Real example: [OpenAI tokenizer](https://platform.openai.com/tokenizer)
 
-</v-click>
 
 ::right::
-
-<v-click>
 
 <Transform :scale="0.7">
 
 ```mermaid
 graph TD
     A["'strawberry'"] --> B[Tokenizer]
-    B --> C["IDs: [12345, 67890]"]
+    B --> C["IDs: [302, 1618, 19772]"]
     C --> D[Model]
     D --> E["Output IDs"]
     E --> F[Detokenizer]
@@ -104,21 +96,14 @@ graph TD
 
 </Transform>
 
-</v-click>
-
-<v-click>
 
 ### Developer Takeaway
-
-<v-clicks>
 
 - Token boundaries affect string operations
 - Impacts JSON parsing, code generation
 - Why some prompts need repetition
 
-</v-clicks>
 
-</v-click>
 
 <!--
 This is crucial to understand. When GPT-4 couldn't count r's in strawberry, it wasn't being stupid.
@@ -129,78 +114,44 @@ Understanding tokenization helps debug weird LLM behaviors.
 -->
 
 ---
-layout: two-cols
+layout: default
 ---
 
-# Autoregression: The Black Box View
+# Autoregression: The Completion Loop
 
-<Transform :scale="0.9">
+### The Black Box View
 
 ```mermaid
 graph LR
-    A["Your Prompt"] --> B["LLM<br/>(Black Box)"]
-    B --> C["Generated Text"]
-
-    D["Temperature:<br/>0 = consistent<br/>0.7 = creative"] -.-> B
+    A["Prompt"] --> B["LLM"]
+    B --> C["Text"]
 
     style B fill:#E8E8E8,stroke:#999,color:#333
     style A fill:#D4E4F8,stroke:#999,color:#333
     style C fill:#D4F8D4,stroke:#999,color:#333
-    style D fill:#FFE4B5,stroke:#999,color:#333
 ```
-</Transform>
+
+As a developer: **Prompt → LLM → Output**
+
+---
+layout: two-cols
+---
+
+# Inside: Token-by-Token Generation
+
+For **each token**:
+1. Look at all previous tokens
+2. Calculate: $P(t_{next} | t_1...t_n)$
+3. Pick next token (**temperature**, topK, topP controls randomness)
+4. Append and repeat
+
+**Stops when**:
+- End token generated (`<|end|>`)
+- Max token limit reached
 
 ::right::
 
-<v-clicks>
-
-### What You Control
-
-**Focus on:**
-- **Input**: Your prompt
-- **Output**: Generated text
-- **Control**: Temperature
-
-</v-clicks>
-
-<v-click>
-
-### Temperature Impact
-
-- **0**: `"Paris"` (deterministic)
-- **0.7**: `"Paris, a beautiful city..."` (balanced)
-- **1.5**: `"Paris! Or Rome? Tokyo?"` (creative)
-
-</v-click>
-
-<!--
-Start with what developers actually interact with: prompts and temperature.
-The black box abstraction helps focus on controllable parameters first.
-Give concrete examples of how temperature affects output.
-This builds intuition before diving into the mechanism.
--->
-
----
-layout: default
----
-
-# Inside the Black Box: The Completion Loop
-
-### The Autoregressive Mechanism
-
-<v-clicks>
-
-For **each token**, the model:
-1. Looks at **all previous tokens**
-2. Calculates: $P(t_{next} | t_1, t_2, ..., t_n)$
-3. Picks next token
-4. Appends to context and repeats
-
-</v-clicks>
-
-<v-click>
-
-<Transform :scale="0.65">
+<Transform :scale="1">
 
 ```mermaid
 graph LR
@@ -211,87 +162,213 @@ graph LR
 
     style B fill:#A5D6A7,stroke:#999,color:#333
     style C fill:#FFCC80,stroke:#999,color:#333
-    style D fill:#90CAF9,stroke:#999,color:#333
 ```
 
 </Transform>
 
-</v-click>
 
-<v-click>
 
-### Key Insights
+**Key**: Each token depends on ALL previous tokens. Once generated, it can't be changed.
 
-- Each token depends on **ALL previous tokens**
-- Once generated, it **can't be changed**
-- Early mistakes **cascade**
-- **Context order matters**
+**Impact**: Early mistakes cascade into **hallucinations** - if the model starts with wrong info, it continues building on that error.
 
-</v-click>
 
 <!--
-Now reveal the autoregressive mechanism to explain behaviors like:
-- Why LLMs can't "change their mind" mid-generation
-- Why early mistakes cascade (if it starts saying "Paris is in Germany", it continues with that context)
-- Why context order matters (recent tokens have more weight)
-Understanding this helps debug unexpected LLM behaviors.
-This also explains why techniques like "thinking before answering" work - better early tokens lead to better final output.
+Combined view: start with simple black box, then reveal autoregression.
+Temperature mentioned inline where it matters (step 3).
+
+Autoregression and hallucinations:
+The autoregressive nature is a key source of hallucinations. Once the model generates a wrong token,
+that token becomes part of the context for all subsequent predictions. This creates a cascade effect:
+- If it starts saying "The capital of Australia is Sydney" (wrong - it's Canberra)
+- It will continue with "Sydney, located on the east coast..." building on the false premise
+- It can't "backtrack" and correct itself mid-generation
+
+This is different from "lost in the middle" (next slide):
+- Lost in middle: model can't SEE the correct information (attention issue)
+- Autoregression cascade: model is MISLED by its own wrong output (generation issue)
+
+Both contribute to hallucinations but through different mechanisms.
+
+This also explains why "chain of thought" and "thinking before answering" help reduce hallucinations:
+better early tokens lead to better trajectories. If the model reasons through "capital of Australia"
+before committing to an answer, it's more likely to get Canberra right.
+
+This leads naturally to context window discussion - "all previous tokens" means context grows!
 -->
 
 ---
-layout: default
+layout: two-cols
 ---
 
-# Context Window: The Finite Frontier
+# Multi-Turn Conversations
 
-### The "Filling Up" Problem
+### Chat Completion API Structure
 
-<v-clicks>
-
-200k tokens sounds large, but fills up fast:
-
-```text
-System Instructions:     2,000
-Chat History:           50,000
-RAG Documents:          30,000
-Tool Definitions:       10,000
-Code Files:             80,000
-                       ________
-Total:                 172,000 tokens
+```typescript {*}{fontSize:'0.75rem',lineHeight:'1.3'}
+POST /v1/chat/completions
+{
+  "model": "gpt-4",
+  "messages": [
+    {"role": "system", "content": "..."},
+    {"role": "user", "content": "..."},
+    {"role": "assistant", "content": "..."}
+  ]
+}
 ```
 
-</v-clicks>
+### The Illusion of Memory
 
-<v-click>
+LLMs are **stateless** - they don't remember previous conversations!
 
-### The "Lost in the Middle" Phenomenon
+Each API call sends the **entire conversation history** as input.
 
-<Transform :scale="0.65">
+**Key Insight**: The model "remembers" because YOUR APP replays the entire conversation each time!
+
+::right::
+
+<Transform :scale="0.75">
 
 ```mermaid
-graph LR
-    A[Strong] --> B[Weak] --> C[Strong]
-    A --- D["Start"]
-    B --- E["Middle"]
-    C --- F["End"]
+sequenceDiagram
+    participant User
+    participant App as Your App
+    participant LLM
 
-    style B fill:#FFD4D4,stroke:#999,color:#333
-    style A fill:#D4F8D4,stroke:#999
-    style C fill:#D4F8D4,stroke:#999
+    Note over App: messages = []
+
+    User->>App: "Hi, I'm Alice"
+    App->>App: messages.push(user msg)
+    App->>LLM: Send all messages
+    LLM->>App: "Hello Alice!"
+    App->>App: messages.push(assistant msg)
+
+    User->>App: "What's my name?"
+    App->>App: messages.push(user msg)
+    App->>LLM: Send ALL messages
+    LLM->>App: "Your name is Alice"
 ```
 
 </Transform>
 
+<!--
+This is a critical mental model shift for developers.
+When you chat with ChatGPT and it "remembers" your name, it's not storing that in a database.
+The app is sending every previous message in EVERY API call.
+This is why conversations feel stateful even though the model is stateless.
+The app manages state, the model just processes the full context each time.
+This directly explains why context windows matter - longer conversations = more tokens.
+-->
+
+---
+layout: two-cols
+---
+
+# Multi-Turn: What Actually Happens
+
+### Each API Call
+
+```typescript {*}{fontSize:'0.65rem',lineHeight:'1.2'}
+// Turn 1
+messages = [
+  {role: "system", content: "You are helpful"},
+  {role: "user", content: "Hi, I'm Alice"}
+]
+// → LLM returns: "Hello Alice!"
+
+// Turn 2 - FULL history sent again
+messages = [
+  {role: "system", content: "You are helpful"},
+  {role: "user", content: "Hi, I'm Alice"},
+  {role: "assistant", content: "Hello Alice!"},
+  {role: "user", content: "What's my name?"}
+]
+// → LLM returns: "Your name is Alice"
+```
+
+::right::
+
+### The Growing Cost
+
+Each turn sends MORE tokens than before:
+
+```text
+Turn 1:  ~50 tokens  →  Turn 10: ~500 tokens
+Turn 20: ~1,500 tokens  →  Turn 50: ~5,000 tokens
+```
+
+**Implications**: Context limits, re-processing cost, need summarization/pruning strategies.
+
+
+<div class="flex flex-col items-center">
+  <img src="/context-window.svg" class="h-64 mb-4" alt="Context window visualization" />
+</div>
+
+<!--
+This slide makes the cost model concrete.
+Each turn, you're sending MORE tokens than before - the entire history plus the new message.
+By turn 20, a simple conversation might be 1500+ tokens per request.
+This is why production apps need context management strategies.
+Summarize older messages, prune irrelevant turns, or use sliding windows.
+Otherwise, you'll hit context limits AND rack up huge API bills.
+This transitions naturally to context windows - which impose the hard limit.
+-->
+
+---
+layout: center
+---
+
+# The "Lost in the Middle" Phenomenon
+
+<div class="flex gap-8 items-center">
+  <div class="flex-1">
+    <img src="/lost-in-middle.png" class="h-72 rounded shadow" alt="Lost in the Middle - accuracy drops in middle positions" />
+  </div>
+  <div class="flex-1">
+    <img src="https://raw.githubusercontent.com/microsoft/lost_in_conversation/refs/heads/main/images/Lost_in_Conv_Github_Teaser.jpg" class="h-72 rounded shadow" alt="Lost in Conversation research" />
+  </div>
+</div>
+
+<div class="mt-4 text-center">
+
 Models recall best from **start** or **end** of context.
 
-</v-click>
+**Impact**: If critical facts are buried in the middle, the model may "forget" them and **hallucinate** instead.
+
+</div>
+
+---
+
+# Key Principle: Quality In, Quality Out
+
+**LLM output quality largely depends on input quality.**
+
+- Well-structured context → Accurate responses
+- Messy or incomplete context → Hallucinations and errors
+- Strategic placement of information → Better results
+
 
 <!--
 This is a hard constraint that shapes everything we do with LLMs.
 200k sounds huge, but in practice it fills up fast with conversation history and documents.
 The "lost in the middle" phenomenon is research-backed: models are attention-based,
 and they naturally weight the start and end more heavily.
-This means: put critical info at the beginning or end, not buried in the middle.
+
+This directly contributes to hallucinations: if you put the source of truth in the middle of a long context,
+the model might not "see" it and will generate plausible-sounding but incorrect information instead.
+This is why RAG systems that dump 50 documents into the middle of a prompt often fail.
+
+The "Quality In, Quality Out" principle is fundamental:
+- You can't get good outputs from bad inputs
+- Context quality includes: accuracy, relevance, structure, and placement
+- Many production issues stem from poor context management, not model limitations
+- Think of context as your "working memory" - keep it clean, organized, and focused
+
+Best practices:
+- Put critical facts at the beginning (system prompt) or end (recent context)
+- Use prompt caching for frequently-used context at the start
+- Summarize or filter middle content aggressively
+- Continuously curate and prune context as conversations grow
 Strategic context management is more important than having a large window.
 -->
 
@@ -299,120 +376,117 @@ Strategic context management is more important than having a large window.
 layout: default
 ---
 
-# The API Evolution
+# Prompt Engineering: Core Techniques
 
-<v-clicks>
+Why these work: **Autoregression generates based on input patterns** - better prompts = better output trajectories.
 
-### 1. Completion API (GPT-3 era)
+<div class="text-sm">
 
-```typescript
-POST /v1/completions
-{
-  "model": "text-davinci-003",
-  "prompt": "Once upon a time",
-  "max_tokens": 100
-}
-```
+| Technique | Why It Works | Example |
+|-----------|--------------|---------|
+| **Role Assignment** | Activates domain-specific training patterns | `"You are a senior engineer..."` |
+| **Few-Shot Prompting** | Demonstrates expected format and reasoning | `"happy→positive" "terrible→negative" "awesome→?"` |
+| **Chain of Thought** | Forces step-by-step reasoning, reduces errors | `"Let's think step by step..."` |
+| **Give an "Out"** | Reduces hallucination by allowing uncertainty | `"If unsure, say 'I don't know'"` |
+| **Output Format** | Constrains generation to valid structures | `"Respond in JSON: {name, email, age}"` |
 
-Raw "predict the next word" engine. You craft the entire prompt as a string.
+</div>
 
-</v-clicks>
-
-<v-click>
-
-### 2. Chat Completion API (GPT-3.5+ era)
-
-```typescript
-POST /v1/chat/completions
-{
-  "model": "gpt-4",
-  "messages": [
-    {"role": "system", "content": "You are a helpful assistant."},
-    {"role": "user", "content": "What is recursion?"},
-    {"role": "assistant", "content": "Recursion is when a function calls itself..."}
-  ]
-}
-```
-
-Structured conversation with roles. **Better context management**.
-
-</v-click>
 
 <!--
-The shift from Completion to Chat API was huge for developers.
-Completion API: you had to manually format everything, including conversation history.
-Chat API: the SDK manages the message structure, making multi-turn conversations natural.
-This structural change enabled better context engineering and made it easier to build conversational apps.
-But fundamentally, it's still autoregression - just with better formatting.
+These techniques all leverage how autoregression works.
+
+Role Assignment: When you say "You are a senior Python developer", you're essentially
+conditioning the probability distribution toward code patterns seen in expert contexts.
+The model activates different "knowledge clusters" based on the persona.
+
+Few-Shot: By showing examples, you're giving the model concrete patterns to follow.
+It will generate tokens that continue the pattern you've established.
+Works well because transformers are excellent at pattern matching.
+
+Chain of Thought: Remember, early tokens influence later ones. By forcing the model
+to "think step by step", you ensure it generates reasoning tokens BEFORE the answer.
+This creates a better trajectory and catches errors early.
+
+Output Format: Constraining the output format reduces the solution space.
+Instead of free-form text, the model focuses on valid JSON/XML/etc.
+Combined with structured output mode (JSON mode), this is very powerful.
+
+These techniques stack: Role + Few-Shot + CoT + Format = production-grade prompts.
 -->
 
 ---
-layout: two-cols
+layout: default
 ---
 
 # Context Engineering
 
-<v-clicks>
+Managing the finite context window effectively.
 
-### Key Techniques
+<div class="grid grid-cols-3 gap-6 mt-6">
 
-**RAG (Retrieval Augmented Generation)**
-- Bring external memory
-- Query relevant documents dynamically
-- Inject only what's needed
+<div class="p-4 bg-green-50 rounded-lg">
 
-**State Management**
-- Conversation summarization
-- Sliding windows
-- Prompt caching (Anthropic)
+### Select
 
-**Structured Output**
-- JSON mode: `response_format: { type: "json_object" }`
-- Schema validation with Zod/Pydantic
-- Tool responses as structured data
+**What to include?**
 
-</v-clicks>
+- **RAG**: Retrieve relevant docs dynamically
+- **Semantic search**: Find related code/content
+- **Recency bias**: Prioritize recent context
 
-::right::
+*"Fetch only what's needed, when it's needed"*
 
-<v-click>
+</div>
 
-### Structured Output Example
+<div class="p-4 bg-blue-50 rounded-lg">
 
-```typescript
-const completion = await openai.chat.completions.create({
-  model: "gpt-4",
-  response_format: { type: "json_object" },
-  messages: [
-    {
-      role: "system",
-      content: `Extract user info as JSON:
-      {
-        "name": string,
-        "email": string,
-        "age": number
-      }`
-    },
-    {
-      role: "user",
-      content: "I'm Alice, 28, alice@example.com"
-    }
-  ]
-});
+### Compress
 
-// Guaranteed valid JSON response
-const data = JSON.parse(completion.choices[0].message.content);
-```
+**How to fit more?**
 
-</v-click>
+- **Summarization**: Condense old conversations
+- **Sliding windows**: Drop oldest messages
+- **Prompt caching**: Reuse static prefixes
+
+*"Same information, fewer tokens"*
+
+</div>
+
+<div class="p-4 bg-purple-50 rounded-lg">
+
+### Multi-Agent
+
+**Divide and conquer**
+
+- **Specialized agents**: Each with focused context
+- **Orchestrator**: Routes tasks to experts
+- **Shared memory**: External state store
+
+*"Multiple small contexts > one overloaded context"*
+
+</div>
+
+</div>
 
 <!--
-Context engineering is where you move from hobbyist to professional LLM developer.
-RAG is critical for knowledge-intensive apps - you can't fit Wikipedia in a prompt.
-Summarization keeps conversations manageable over long sessions.
-Structured output is underrated - JSON mode eliminates parsing errors and makes LLM outputs reliable.
-When building production apps, always use structured output for data extraction.
-Windsurf uses these patterns extensively, as we'll see later.
+Context engineering is the art of managing the finite context window.
+
+Select: Don't dump everything into the prompt. Use RAG to dynamically retrieve
+only the documents relevant to the current query. Semantic search helps find
+related code snippets. Recency bias means prioritizing recent messages.
+
+Compress: When context grows, compress it. Summarize older conversation turns
+into a paragraph. Use sliding windows to drop the oldest messages. Prompt caching
+(offered by Anthropic, OpenAI) lets you reuse the static prefix without re-processing.
+
+Multi-Agent: Instead of one agent with a massive context, use multiple specialized
+agents. A code agent knows about code, a docs agent knows about documentation.
+An orchestrator routes tasks. External memory (databases, vector stores) provides
+shared state. This is how production systems like Devin, Windsurf, and Cursor work.
+
+These three strategies stack: Select the right content, Compress it efficiently,
+and Distribute across multiple agents when a single context isn't enough.
 -->
 
 ---
@@ -438,23 +512,18 @@ layout: two-cols
 
 # Tool Use: The Mechanism
 
-<v-clicks>
-
 ### How It Actually Works
 
 1. You define tools (functions) in the API call
-2. Model generates **structured JSON intent**
+2. Model generates **structured JSON intent** ← *Structured Output!*
 3. Your client executes the tool
 4. Result feeds back into model's context
 5. Model continues reasoning
 
-**Critical**: The model doesn't execute code - it only produces instructions!
+**Key Insight**: Tool calling is structured output in action - the model outputs valid JSON that your code can parse and execute!
 
-</v-clicks>
 
 ::right::
-
-<v-click>
 
 ```mermaid
 sequenceDiagram
@@ -470,7 +539,6 @@ sequenceDiagram
     Model->>Client: "It's 18°C and foggy in SF"
 ```
 
-</v-click>
 
 <!--
 This loop is the heart of agentic systems. The model is the brain, tools are the hands.
@@ -488,7 +556,7 @@ layout: default
 
 ### Defining Tools
 
-```typescript
+```typescript {*}{fontSize:'0.7rem',lineHeight:'1.2'}
 const tools = [
   {
     type: "function",
@@ -497,9 +565,7 @@ const tools = [
       description: "Search the web for current information",
       parameters: {
         type: "object",
-        properties: {
-          query: { type: "string", description: "Search query" }
-        },
+        properties: { query: { type: "string", description: "Search query" } },
         required: ["query"]
       }
     }
@@ -507,13 +573,11 @@ const tools = [
   {
     type: "function",
     function: {
-      name: "execute_python",
-      description: "Execute Python code in a sandboxed environment",
+      name: "execute_javascript",
+      description: "Execute Javascript code in a sandboxed environment",
       parameters: {
         type: "object",
-        properties: {
-          code: { type: "string", description: "Python code to execute" }
-        },
+        properties: { code: { type: "string", description: "Javascript code to execute" } },
         required: ["code"]
       }
     }
@@ -534,36 +598,28 @@ layout: default
 
 # Tool Use: Execution Loop
 
-```typescript {all|1-5|7-11|13-18|20-28|all}
+```typescript {*}{fontSize:'0.65rem',lineHeight:'1.2'}
 const messages = [
   { role: "system", content: "You are a helpful assistant with access to web search and code execution." },
-  { role: "user", content: "What's the current price of Bitcoin? Then calculate 10% of that." }
+  { role: "user", content: "What's the current price of GOOG? Then calculate 10% of that." }
 ];
 
-let response = await openai.chat.completions.create({
-  model: "gpt-4",
-  messages,
-  tools
-});
+let response = await openai.chat.completions.create({ model: "gpt-4", messages, tools });
 
 // Model decides to call web_search
 if (response.choices[0].message.tool_calls) {
   const toolCall = response.choices[0].message.tool_calls[0];
   console.log(`Calling: ${toolCall.function.name}(${toolCall.function.arguments})`);
-  // >>> Calling: web_search({"query": "current Bitcoin price"})
+  // >>> Calling: web_search({"query": "current GOOG price"})
 }
 
 // Execute the tool
 const searchResult = await executeWebSearch(JSON.parse(toolCall.function.arguments).query);
-// Result: "Bitcoin is currently trading at $43,250"
+// Result: "GOOG is currently trading at $333"
 
 // Feed result back to model
 messages.push(response.choices[0].message);
-messages.push({
-  role: "tool",
-  tool_call_id: toolCall.id,
-  content: JSON.stringify(searchResult)
-});
+messages.push({ role: "tool", tool_call_id: toolCall.id, content: JSON.stringify(searchResult) });
 ```
 
 <!--
@@ -584,15 +640,10 @@ layout: default
 
 ### Why Code Execution?
 
-<v-clicks>
-
 - LLMs are **bad at math**: `123456 * 789012 = ?` → unreliable
 - LLMs can't generate **real-time visualizations**
 - But LLMs are **great at writing code** to solve these problems!
 
-</v-clicks>
-
-<v-click>
 
 ### The Pattern
 
@@ -607,7 +658,6 @@ graph LR
     style C fill:#FFCC80,stroke:#999,color:#333
 ```
 
-</v-click>
 
 <!--
 This is a killer feature that makes LLMs actually useful for technical tasks.
@@ -615,52 +665,6 @@ Without code execution, asking "plot a sine wave" would just get you a text desc
 WITH code execution, the model writes matplotlib code, runs it, and shows you the actual plot.
 The same applies to complex math: the model knows to delegate to Python for precision.
 This is how tools like Claude Artifacts and ChatGPT Code Interpreter work.
--->
-
----
-layout: default
----
-
-# Code Generation Tool Example
-
-```python {all|1-8|10-18|20-25|all}
-# Model generates this code
-code = """
-import matplotlib.pyplot as plt
-import numpy as np
-
-x = np.linspace(0, 2*np.pi, 100)
-plt.plot(x, np.sin(x))
-plt.savefig('sine_wave.png')
-"""
-
-# Your app executes in a sandbox
-import subprocess
-import base64
-
-result = subprocess.run(
-    ["python", "-c", code],
-    capture_output=True, timeout=5
-)
-
-# Return the image to model
-with open('sine_wave.png', 'rb') as f:
-    img_base64 = base64.b64encode(f.read()).decode()
-
-tool_result = {
-    "status": "success",
-    "output": "Plot saved",
-    "image": img_base64
-}
-```
-
-<!--
-This shows the complete flow. The model writes syntactically correct Python.
-Your application runs it in a sandboxed environment (critical for security).
-The result - in this case an image - goes back to the model's context.
-The model can then say "Here's your sine wave plot" and the user sees the actual image.
-This pattern extends to data analysis, file manipulation, API calls - anything code can do.
-Security note: ALWAYS sandbox execution. Use Docker, restricted environments, or services like E2B.
 -->
 
 ---
@@ -686,8 +690,6 @@ layout: two-cols
 
 # MCP: The Problem
 
-<v-clicks>
-
 ### Before MCP
 
 Every integration is custom:
@@ -705,11 +707,9 @@ N Tools × M Clients = N×M integrations
 10 tools × 5 clients = 50 custom integrations!
 ```
 
-</v-clicks>
-
 ::right::
 
-<v-click>
+<Transform :scale="0.6">
 
 ```mermaid
 graph TD
@@ -729,9 +729,10 @@ graph TD
     style C3 fill:#E8D4F8,stroke:#999
 ```
 
+</Transform>
+
 Every arrow is custom code!
 
-</v-click>
 
 <!--
 This is the pain point MCP solves. Before MCP, if you built a Figma integration for Claude,
@@ -743,7 +744,7 @@ MCP provides the standard so everyone speaks the same language.
 -->
 
 ---
-layout: default
+layout: two-cols
 ---
 
 # MCP: The Solution
@@ -752,12 +753,8 @@ layout: default
 
 ```mermaid
 graph LR
-    subgraph Client
-        A[LLM Application<br/>Claude Desktop, Cursor, etc.]
-    end
-
-    subgraph Host
-        B[MCP Host<br/>Protocol Handler]
+    subgraph Client["Client (Claude, Cursor, Windsurf)"]
+        A[MCP Host]
     end
 
     subgraph Servers
@@ -766,141 +763,116 @@ graph LR
         E[Postgres MCP Server]
     end
 
-    A <-->|MCP Protocol| B
-    B <-->|stdio/SSE| C
-    B <-->|stdio/SSE| D
-    B <-->|stdio/SSE| E
+    A <-->|stdio/SSE| C
+    A <-->|stdio/SSE| D
+    A <-->|stdio/SSE| E
 
-    style A fill:#A5D6A7,stroke:#999,color:#333
-    style B fill:#FFCC80,stroke:#999,color:#333
+    style A fill:#FFCC80,stroke:#999,color:#333
     style C fill:#90CAF9,stroke:#999,color:#333
     style D fill:#90CAF9,stroke:#999,color:#333
     style E fill:#90CAF9,stroke:#999,color:#333
 ```
 
-<v-clicks>
+::right::
 
-- **Client**: The LLM application (Claude, Cursor, Windsurf)
-- **Host**: Manages connections and protocol translation
+### Key Components
+
+- **Client**: LLM app (Claude, Cursor, Windsurf) with embedded MCP Host
 - **Server**: Provides tools/resources/prompts via standard MCP interface
+- **Transport**: stdio (local) or SSE (remote)
 
-</v-clicks>
+<div class="mt-6 p-3 bg-amber-50 border-l-4 border-amber-400 rounded">
+
+**Key Shift**: Tool definitions move from **client-side** to **server-side**.
+
+The server declares its own capabilities — clients just discover and use them!
+
+</div>
 
 <!--
 This is the architecture that makes everything work. Three layers:
 1. Client: Your LLM app - it just speaks MCP, doesn't care about underlying tools
 2. Host: The middleware that manages connections - often built into the client
 3. Servers: Individual tools that implement the MCP spec
+
+The KEY insight: Before MCP, each client had to define tool schemas for each integration.
+With MCP, the SERVER defines its own tools. The client just asks "what can you do?"
+and the server responds with its capabilities. This inverts the responsibility.
+
 Communication happens over stdio or Server-Sent Events - both simple, well-understood protocols.
 Once a tool implements MCP, ANY client can use it. Once a client implements MCP, it can use ANY tool.
 This is the network effect that will accelerate LLM tool development.
 -->
 
 ---
-layout: default
+layout: two-cols
 ---
 
 # MCP: Real-World Examples
 
-<v-clicks>
+### GitHub MCP Server
 
-### Filesystem MCP Server
-
-```json
+```json {*}{fontSize:'0.65rem',lineHeight:'1.2'}
 {
-  "name": "read_file",
-  "description": "Read contents of a file",
+  "name": "create_pull_request",
+  "description": "Create a new pull request",
   "inputSchema": {
     "type": "object",
     "properties": {
-      "path": { "type": "string" }
+      "owner": { "type": "string" },
+      "repo": { "type": "string" },
+      "title": { "type": "string" },
+      "head": { "type": "string" },
+      "base": { "type": "string" }
     },
-    "required": ["path"]
+    "required": ["owner", "repo", "title", "head", "base"]
   }
 }
 ```
 
-**Use case**: LLM can read project files to understand codebase structure.
+**Use case**: "Create a PR from my feature branch to main"
 
-</v-clicks>
+::right::
 
-<v-click>
+### Figma MCP Server
 
-### Database MCP Server
-
-```json
+```json {*}{fontSize:'0.65rem',lineHeight:'1.2'}
 {
-  "name": "query_database",
-  "description": "Execute a SQL query",
+  "name": "get_figma_data",
+  "description": "Get design data from a Figma file",
   "inputSchema": {
     "type": "object",
     "properties": {
-      "query": { "type": "string" },
-      "database": { "type": "string" }
+      "fileKey": { "type": "string" },
+      "nodeId": { "type": "string" }
     },
-    "required": ["query"]
+    "required": ["fileKey"]
   }
 }
 ```
 
-**Use case**: Natural language → SQL query → results back to LLM.
+**Use case**: "Extract styles from this Figma design"
 
-</v-click>
+<div class="mt-4 text-sm text-gray-600">
+
+**More MCP Servers**: Slack, Notion, Linear, Sentry, Postgres, Filesystem, Browser, etc.
+
+See: [github.com/modelcontextprotocol/servers](https://github.com/modelcontextprotocol/servers)
+
+</div>
 
 <!--
-These are practical, everyday tools you'd actually use.
-Filesystem MCP: Instead of copy-pasting files into prompts, the model can read them on-demand.
-This is crucial for large codebases where you can't fit everything in context.
-Database MCP: Ask "What are our top 10 customers?" and the LLM writes SQL, executes it, and presents results.
+These are practical, real-world MCP servers that developers actually use.
+
+GitHub MCP: Create PRs, issues, search code, manage repos - all through natural language.
+The model can say "create a PR for my changes" and the MCP server handles the API call.
+
+Figma MCP: Extract design tokens, component specs, and layout data from Figma files.
+This enables design-to-code workflows where the model understands the actual design.
+
 The key advantage: these servers are reusable across any MCP-compatible client.
-Windsurf, Claude Desktop, and Cursor can all use the same filesystem MCP server.
--->
-
----
-layout: default
----
-
-# MCP: Context Management Benefits
-
-<v-clicks>
-
-### The Old Way: Context Explosion
-
-```typescript
-// Dump everything into the prompt
-const context = `
-File 1: ${readFile('src/app.ts')}      // 500 tokens
-File 2: ${readFile('src/db.ts')}       // 800 tokens
-File 3: ${readFile('src/api.ts')}      // 600 tokens
-... (50 more files)
-`;
-// Total: 40,000 tokens wasted!
-```
-
-### The MCP Way: Dynamic Fetching
-
-```typescript
-// Model decides what it needs
-Model: "I need to see the database schema"
-→ MCP calls read_file('src/schema.sql')  // 200 tokens
-→ Model gets exactly what it asked for
-
-// Later in the conversation:
-Model: "Now show me the API endpoints"
-→ MCP calls read_file('src/api.ts')      // 600 tokens
-```
-
-**Result**: Only fetch what's needed, when it's needed.
-
-</v-clicks>
-
-<!--
-This is THE killer feature of MCP that people miss. It's not just about standardization.
-MCP enables progressive context loading. Instead of shoving your entire codebase into the initial prompt,
-the model can request files on-demand as it reasons through the problem.
-This is how Windsurf handles large projects without hitting context limits.
-The model says "I need to see the user authentication code" and MCP fetches just that file.
-This is fundamentally more efficient than traditional RAG, which retrieves everything upfront.
+Windsurf, Claude Desktop, and Cursor can all use the same GitHub MCP server.
+The ecosystem is growing rapidly - check the official servers repo for more.
 -->
 
 ---
@@ -909,13 +881,11 @@ layout: default
 
 # MCP: The Context Tax
 
-<v-clicks>
-
 ### But MCP Has Overhead Too
 
 Every MCP server must be **described** to the model:
 
-```json
+```json {*}{fontSize:'0.65rem',lineHeight:'1.2'}
 {
   "servers": {
     "filesystem": {
@@ -938,7 +908,6 @@ Every MCP server must be **described** to the model:
 **Cost**: ~100-200 tokens per tool definition
 With 20 tools → **2,000-4,000 tokens** just for tool definitions!
 
-</v-clicks>
 
 <!--
 This is the tradeoff. MCP solves dynamic fetching but introduces its own context overhead.
@@ -950,51 +919,78 @@ MCP itself doesn't solve this; it's an application-level optimization you must i
 -->
 
 ---
-layout: default
+layout: two-cols
 ---
 
-# MCP: Progressive Skill Disclosure
+# Progressive Skill Disclosure
 
-<v-clicks>
+<Transform :scale="0.4">
 
-### The Problem
+```mermaid
+graph TD
+    A["Query"] --> B["Layer 1: SUMMARY<br/>Name + Description<br/><100 tokens"]
+    B --> C{Relevant?}
+    C -->|Maybe| D["Layer 2: More Content<br/>~500 tokens"]
+    C -->|No| X["Skip"]
+    D --> E{Need help?}
+    E -->|Yes| F["Layer 3: EXTENDED<br/>Examples + Docs<br/>~2000 tokens"]
+    E -->|No| G["Execute"]
+    F --> G
 
-```typescript
-// Bad: Give model ALL tools upfront
-const allTools = [
-  filesystem_tools,    // 10 tools
-  database_tools,      // 8 tools
-  api_tools,          // 15 tools
-  git_tools,          // 12 tools
-  docker_tools        // 10 tools
-];
-// Total: 55 tools = ~5,500 tokens wasted
+    style B fill:#d4edda,stroke:#28a745
+    style D fill:#cce5ff,stroke:#007bff
+    style F fill:#f8d7da,stroke:#dc3545
 ```
 
-### The Solution: Contextual Tool Loading
+</Transform>
 
-```typescript
-// Good: Expose tools based on user intent
-const userQuery = "Fix the login bug";
+::right::
 
-const relevantTools = detectIntent(userQuery);
-// Detected: code editing task
-// Load only: filesystem_tools + git_tools = ~2,000 tokens
+### How It Works
 
-// If user later asks "deploy to production":
-// Then dynamically load: docker_tools
+<div class="text-sm">
+
+| Layer | Content | When | Cost |
+|-------|---------|------|------|
+| **Summary** | Name, description | Always | <100 token |
+| **Details** | Details | On match | ~500 token |
+| **Extended** | Examples, docs, edge cases | Complex usage | ~2000 token |
+
+</div>
+
+### Example
+
+```text {*}{fontSize:'0.7rem',lineHeight:'1.2'}
+Query: "Fix the login bug"
+
+Layer 1: Scan 55 tools → 8 match
+Layer 2: Load more context for 8 → 3 relevant  
+Layer 3: Load examples for 1 complex tool
+
+Total: 550 + 400 + 200 = 1,150 tokens
+vs. All upfront: 11,000 tokens
 ```
 
-</v-clicks>
+**Key**: Load tool definitions progressively, not all at once.
 
 <!--
-This is an advanced pattern but critical for production systems.
-Analyze the user's request to determine which categories of tools are relevant.
-Code debugging? Load filesystem and git tools. Database question? Load DB tools only.
-This keeps your context lean and focused. As the conversation evolves, you can load more tools.
-Windsurf implements this through its Rules → Skills → Workflow hierarchy.
-The Rules help determine which Skills to expose based on the task context.
-This is the difference between a demo and a production-grade LLM application.
+This is a general context optimization pattern, applicable to any tool-using system.
+
+Layer 1 - Summary: Just the name and category. Loaded for ALL tools upfront.
+Very lightweight (~10 tokens per tool). Used for initial filtering.
+
+Layer 2 - Details: Parameters, return types, use cases, constraints.
+Loaded only for tools that MIGHT be relevant based on Layer 1 match.
+Medium weight (~50 tokens per tool).
+
+Layer 3 - Full Schema: Complete JSON schema, error handling, edge cases.
+Loaded only for tools that WILL be executed. Heavy weight (~200 tokens).
+
+The math is compelling: instead of loading 11,000 tokens for 55 tools,
+you load 550 (all summaries) + 400 (8 detail loads) + 600 (3 full schemas) = 1,550 tokens.
+That's an 85% reduction in context usage!
+
+This pattern applies to any LLM system with multiple tools - not specific to MCP.
 -->
 
 ---
@@ -1022,8 +1018,6 @@ layout: two-cols
 
 ### The Three-Layer System
 
-<v-clicks>
-
 **1. Rules** (`.windsurfrules`)
 - Global context and constraints
 - Coding standards, preferences
@@ -1039,16 +1033,13 @@ layout: two-cols
 - "Refactor component" = multiple Skills
 - Agentic reasoning loop
 
-</v-clicks>
 
 ::right::
-
-<v-click>
 
 ```mermaid
 graph TD
     A[User Request:<br/>'Refactor React component'] --> B[Rules Layer]
-    B --> C{Check .windsurfrules}
+    B --> C{Check Project Rules}
     C --> D[Apply coding style:<br/>Functional components,<br/>TypeScript strict mode]
     D --> E[Skills Layer]
     E --> F[read_file]
@@ -1066,7 +1057,6 @@ graph TD
     style J fill:#90CAF9,stroke:#999,color:#333
 ```
 
-</v-click>
 
 <!--
 This is Windsurf's architecture distilled. Three layers that build on each other:
@@ -1084,36 +1074,38 @@ layout: default
 
 # Windsurf: Rules Example
 
-### `.windsurfrules` file
+### Project Rules Configuration
 
-```yaml
+Windsurf allows you to configure project-wide rules and preferences through its settings. Example configuration:
+
+```markdown {*}{fontSize:'0.65rem',lineHeight:'1.2'}
 # Project-wide coding standards
-language: TypeScript
-framework: React
-style:
-  - Use functional components with hooks
-  - Prefer arrow functions
-  - No default exports
-  - Always use strict TypeScript mode
 
-testing:
-  - Write tests for all business logic
-  - Use Jest and React Testing Library
-  - Minimum 80% coverage
+## Language & Framework
+- Language: TypeScript
+- Framework: React
+- Use functional components with hooks
+- Prefer arrow functions
+- No default exports
+- Always use strict TypeScript mode
 
-security:
-  - Never commit API keys or secrets
-  - Validate all user inputs
-  - Use parameterized queries for database access
+## Testing
+- Write tests for all business logic
+- Use Jest and React Testing Library
+- Minimum 80% coverage
+
+## Security
+- Never commit API keys or secrets
+- Validate all user inputs
+- Use parameterized queries for database access
 ```
-
-<v-clicks>
 
 **Impact**: These rules are **injected into context** for every LLM request.
 
 The model sees these constraints and follows them automatically!
 
-</v-clicks>
+*Note: Configuration format may vary by Windsurf version - check current documentation for exact syntax.*
+
 
 <!--
 Rules are incredibly powerful. They're essentially a custom system prompt for your project.
@@ -1173,8 +1165,6 @@ layout: default
 
 # Windsurf: MCP Integration
 
-<v-clicks>
-
 ### How Windsurf Leverages MCP
 
 **Filesystem MCP Server**
@@ -1193,15 +1183,11 @@ layout: default
 - Internal tooling, APIs, databases
 - Team-specific integrations
 
-</v-clicks>
-
-<v-click>
 
 ### Result: Windsurf is **extensible without core changes**
 
 Add a new MCP server → Windsurf gains new capabilities automatically!
 
-</v-click>
 
 <!--
 This is where MCP shines in practice. Windsurf doesn't hardcode integrations.
@@ -1219,8 +1205,6 @@ layout: default
 ---
 
 # Windsurf: Context Management Strategy
-
-<v-clicks>
 
 ### How Windsurf Handles Context Limits
 
@@ -1241,13 +1225,9 @@ layout: default
 - After 10-15 exchanges, summarize earlier conversation
 - Keep recent context, summarize old context
 
-</v-clicks>
-
-<v-click>
 
 ### Result: Works on large codebases without hitting 200k limit
 
-</v-click>
 
 <!--
 This is the production-grade context management strategy in action.
@@ -1279,63 +1259,50 @@ layout: two-cols
 
 # Key Takeaways
 
-<v-clicks>
+### 1. Context is Everything
 
-### 1. Foundation Matters
-- Tokens → Autoregression → Context
-- Understanding these shapes everything
+- LLMs are **stateless** - your app manages memory
+- Context windows are finite and expensive
+- **Quality in = Quality out**
 
-### 2. API Evolution
-- Completion → Chat → Tool Use
-- From "prompting" to "protocol engineering"
+### 2. Context Engineering
 
-### 3. Tool Use is Critical
-- Function calling + code execution
-- LLMs become agents, not just chatbots
-
-### 4. MCP is the Future
-- Standardized tool integration
-- Dynamic context fetching
-- Extensibility without rewrites
-
-</v-clicks>
+- **Select**: RAG, semantic search, recency
+- **Compress**: Summarization, sliding windows
+- **Distribute**: Multi-agent architectures
+- Progressive disclosure saves tokens
 
 ::right::
 
-<v-click>
+### 3. Tool Use Transforms LLMs
 
-### 5. Production Patterns
+- Models generate **structured JSON intent**
+- Your app executes, model reasons
+- From chatbots to **agents that act**
 
-<v-clicks>
+### 4. Production Patterns
 
-**Context Engineering**
-- Structured output (JSON mode)
-- Progressive skill disclosure
-- Dynamic fetching over upfront loading
-
-**Real-World Architecture**
-- Rules for global constraints
-- Skills for atomic actions
-- Workflows for orchestration
-
-**Windsurf as Case Study**
-- Combines all these patterns
-- MCP for extensibility
-- Context management for scale
-
-</v-clicks>
-
-</v-click>
+- Prompt engineering: Role, Few-shot, CoT, Format
+- Tool definitions as structured output
+- Dynamic loading over upfront dumping
+- MCP standardizes tool integration
 
 <!--
-These are the key mental models to take away.
-Foundation: You can't debug LLM apps without understanding tokens and context.
-API Evolution: We've moved from prompt hacking to engineering structured interactions.
-Tool Use: This is what makes LLMs useful beyond conversation - they can DO things.
-MCP: This will standardize the ecosystem and accelerate development.
-Production Patterns: Context management, progressive disclosure, structured output - these separate toys from tools.
-Windsurf embodies these principles: Rules + Skills + Workflows on top of MCP.
-When you build your next LLM feature, think in terms of these layers.
+Two core themes to remember:
+
+1. Context Management - This is the fundamental constraint.
+   - LLMs don't remember anything - YOU replay conversation history
+   - The context window fills up fast - select, compress, distribute
+   - Put important information at the start or end (lost in middle)
+   - Progressive disclosure applies to both tools and documents
+
+2. Tool Use - This is what makes LLMs useful.
+   - The model outputs structured JSON (structured output in action)
+   - Your code executes the tool, feeds result back
+   - This loop is the foundation of all agentic systems
+   - MCP standardizes this for ecosystem-wide interoperability
+
+Everything else builds on these two pillars.
 -->
 
 ---
@@ -1345,12 +1312,10 @@ class: text-center
 
 # Next Steps
 
-<v-clicks>
-
 ### For Our Team
 
-1. **Explore Windsurf's `.windsurfrules`**
-   Customize for your projects
+1. **Explore Windsurf's Rules Configuration**
+   Customize project settings and preferences
 
 2. **Build a Simple MCP Server**
    Start with internal tool integration
@@ -1361,9 +1326,6 @@ class: text-center
 4. **Optimize Context Usage**
    Apply progressive disclosure patterns
 
-</v-clicks>
-
-<v-click>
 
 <div class="pt-8">
 
@@ -1375,11 +1337,10 @@ class: text-center
 
 </div>
 
-</v-click>
 
 <!--
 Concrete next steps for our team.
-First, if you're using Windsurf, dig into .windsurfrules - make it work for YOUR project.
+First, if you're using Windsurf, explore its Rules configuration - customize it for YOUR project.
 Second, pick an internal tool and write a simple MCP server. Could be a config reader, a build tool, anything.
 Third, add function calling to an existing project - even something simple like web search.
 Fourth, profile your context usage and optimize. Are you dumping too much upfront?
@@ -1405,5 +1366,5 @@ Open the floor for questions. Common questions to be ready for:
 - "Does Windsurf support custom MCP servers?" → Yes, configure in settings
 
 Be ready to demo if time allows. Have Claude Desktop with an MCP server configured,
-or show the Windsurf .windsurfrules file from an actual project.
+or show Windsurf's Rules configuration from an actual project.
 -->
